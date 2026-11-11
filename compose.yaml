@@ -1,0 +1,76 @@
+name: fastapi-metrics
+
+services:
+  api:
+    build: .
+    image: fastapi-metrics:local
+    # Para usar a imagem publicada pelo CI, troque as 2 linhas acima por:
+    # image: ghcr.io/guilhermexl/fastapi-metrics:latest
+    ports:
+      - "127.0.0.1:8000:8000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    # O HEALTHCHECK já vem definido no Dockerfile
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      api:
+        condition: service_healthy
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/fastapi-metrics.json
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+  # Gerador de carga opcional: docker compose --profile load up -d
+  loadgen:
+    image: curlimages/curl:8.11.1
+    profiles: [load]
+    depends_on:
+      api:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Gerando carga em http://api:8000 ..."
+        while true; do
+          for t in report billing email report invalid; do
+            curl -s -o /dev/null -X POST "http://api:8000/process/$$t" &
+          done
+          curl -s -o /dev/null http://api:8000/health
+          wait
+          sleep 0.5
+        done
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  grafana-data:

@@ -8,3 +8,9 @@ venv/
 Dockerfile
 .dockerignore
 *.md
+.github/
+monitoring/
+compose.yaml
+.env
+.env.*
+.ruff_cache/
